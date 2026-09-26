@@ -165,6 +165,8 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
       pgcIntroController = Get.put(PgcIntroController(), tag: heroTag);
     }
 
+    bindMediaSessionSkip();
+
     videoSourceInit();
 
     addObserverMobile(this);
@@ -207,6 +209,23 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
         ..addPositionListener(positionListener);
     }
     return plPlayerController?.play();
+  }
+
+  // 复用播放器内部的切集逻辑，响应系统媒体控制的上一集/下一集
+  void bindMediaSessionSkip() {
+    videoPlayerServiceHandler
+      ?..onNext = () async {
+        if (!mounted) return;
+        if (!introController.nextPlay()) {
+          SmartDialog.showToast('已经是最后一集了');
+        }
+      }
+      ..onPrev = () async {
+        if (!mounted) return;
+        if (!introController.prevPlay()) {
+          SmartDialog.showToast('已经是第一集了');
+        }
+      };
   }
 
   // 播放器状态监听
@@ -411,6 +430,9 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
     }
 
     PlPlayerController.setPlayCallBack(playCallBack);
+
+    // 从上层视频页返回时收回媒体控制切集权
+    bindMediaSessionSkip();
 
     introController.startTimer();
 
