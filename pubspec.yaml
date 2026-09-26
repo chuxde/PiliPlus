@@ -175,6 +175,10 @@ dependencies:
       ref: main
 
 dependency_overrides:
+  canvas_danmaku:
+    git:
+      url: https://github.com/chuxde/canvas_danmaku.git
+      ref: perf
   flutter_inappwebview_android:
     git:
       url: https://github.com/bggRGjQaUbCoE/flutter_inappwebview.git
