@@ -65,27 +65,27 @@ class _PlDanmakuState extends State<PlDanmaku> {
       ..addPositionListener(videoPositionListen);
   }
 
-  @override
-  void didUpdateWidget(PlDanmaku oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.notFullscreen != widget.notFullscreen &&
-        !DanmakuOptions.sameFontScale) {
-      _controller?.updateOption(
-        DanmakuOptions.get(notFullscreen: widget.notFullscreen),
-      );
+  // 播放器状态监听
+  void playerListener(PlayerStatus status) => _syncDanmakuRunning();
+
+  // 播放暂停或弹幕隐藏时停掉引擎 ticker，避免整层透明度隐藏后空转
+  void _syncDanmakuRunning() {
+    final controller = _controller;
+    if (controller == null) {
+      return;
+    }
+    if (playerController.enableShowDanmaku.value &&
+        playerController.playerStatus.isPlaying) {
+      controller.resume();
+    } else {
+      controller.pause();
     }
   }
 
-  // 播放器状态监听
-  void playerListener(PlayerStatus status) {
-    if (_controller case final controller?) {
-      if (status.isPlaying) {
-        controller.resume();
-      } else {
-        controller.pause();
-      }
-    }
-  }
+  late final Worker _showDanmakuWorker = ever<bool>(
+    playerController.enableShowDanmaku,
+    (_) => _syncDanmakuRunning(),
+  );
 
   @pragma('vm:notify-debugger-on-exception')
   void videoPositionListen(Duration position) {
@@ -114,7 +114,7 @@ class _PlDanmakuState extends State<PlDanmaku> {
       final blockColorful = DanmakuOptions.blockColorful;
       final danmakuWeight = DanmakuOptions.danmakuWeight;
       for (DanmakuElem e in currentDanmakuList) {
-        if (e.weight < danmakuWeight) return;
+        if (e.weight < danmakuWeight) continue;
         if (e.mode == 7) {
           try {
             _controller!.addDanmaku(
@@ -157,6 +157,7 @@ class _PlDanmakuState extends State<PlDanmaku> {
 
   @override
   void dispose() {
+    _showDanmakuWorker.dispose();
     playerController
       ..removePositionListener(videoPositionListen)
       ..removeStatusLister(playerListener);
@@ -172,18 +173,23 @@ class _PlDanmakuState extends State<PlDanmaku> {
       speed: playerController.playbackSpeed,
     );
     return Obx(
-      () => AnimatedOpacity(
-        opacity: playerController.enableShowDanmaku.value
-            ? playerController.danmakuOpacity.value
-            : 0,
-        duration: const Duration(milliseconds: 100),
-        child: DanmakuScreen<DanmakuExtra>(
-          createdController: (e) {
-            playerController.danmakuController = _controller = e;
-          },
-          option: option,
-          size: widget.size,
+      () => TweenAnimationBuilder<double>(
+        tween: Tween(
+          end: playerController.enableShowDanmaku.value
+              ? playerController.danmakuOpacity.value
+              : 0,
         ),
+        duration: const Duration(milliseconds: 100),
+        builder: (context, opacity, child) {
+          return DanmakuScreen<DanmakuExtra>(
+            createdController: (e) {
+              playerController.danmakuController = _controller = e;
+            },
+            // alpha 由引擎逐条弹幕应用，避免透明度 < 1 时整层 saveLayer
+            option: option.copyWith(opacity: opacity),
+            size: widget.size,
+          );
+        },
       ),
     );
   }

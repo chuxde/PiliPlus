@@ -1,0 +1,601 @@
+diff --git a/lib/base_danmaku_painter.dart b/lib/base_danmaku_painter.dart
+index 05b5d50..574af45 100644
+--- a/lib/base_danmaku_painter.dart
++++ b/lib/base_danmaku_painter.dart
+@@ -6,6 +6,7 @@ abstract base class BaseDanmakuPainter extends CustomPainter {
+   final double fontSize;
+   final int fontWeight;
+   final double strokeWidth;
++  final double opacity;
+   final bool running;
+   final int batchThreshold;
+   final int tick;
+@@ -17,6 +18,7 @@ abstract base class BaseDanmakuPainter extends CustomPainter {
+     required this.fontSize,
+     required this.fontWeight,
+     required this.strokeWidth,
++    this.opacity = 1.0,
+     required this.running,
+     required this.tick,
+     this.batchThreshold = 10, // 默认值为10，可以自行调整
+@@ -26,8 +28,13 @@ abstract base class BaseDanmakuPainter extends CustomPainter {
+     Canvas canvas,
+     DanmakuItem item,
+     double dx,
+-    double dy,
+-  ) {
++    double dy, [
++    double opacity = 1.0,
++  ]) {
++    // drawImage 只取 paint 的 alpha，逐条设置可避免整层 saveLayer
++    _paint.color = opacity == 1.0
++        ? const Color(0xFFFFFFFF)
++        : Color.fromRGBO(0, 0, 0, opacity);
+     final img = item.image!;
+     if (img.width == item.width.ceil()) {
+       canvas.drawImage(img, Offset(dx, dy), _paint);
+@@ -45,6 +52,7 @@ abstract base class BaseDanmakuPainter extends CustomPainter {
+         oldDelegate.length != length ||
+         oldDelegate.fontSize != fontSize ||
+         oldDelegate.fontWeight != fontWeight ||
+-        oldDelegate.strokeWidth != strokeWidth;
++        oldDelegate.strokeWidth != strokeWidth ||
++        oldDelegate.opacity != opacity;
+   }
+ }
+diff --git a/lib/danmaku_screen.dart b/lib/danmaku_screen.dart
+index 2232b5e..90d03dd 100644
+--- a/lib/danmaku_screen.dart
++++ b/lib/danmaku_screen.dart
+@@ -1,3 +1,4 @@
++import 'dart:collection';
+ import 'dart:math';
+ 
+ import 'package:canvas_danmaku/danmaku_controller.dart';
+@@ -47,6 +48,10 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>>
+   /// 高级弹幕
+   final _specialDanmakuItems = <DanmakuItem<T>>[];
+ 
++  /// 待入库队列：光栅化（文本排版 + toImageSync）开销大，
++  /// 每帧只处理 [DanmakuOption.maxRasterizePerFrame] 条，避免密集弹幕同帧掉帧
++  final _pendingAdds = Queue<DanmakuContentItem<T>>();
++
+   bool get _isEmpty =>
+       _scrollDanmakuItems.every((list) => list.isEmpty) &&
+       _staticDanmakuItems.value.nonNulls.isEmpty &&
+@@ -129,12 +134,22 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>>
+   int _time = 0;
+   void _tick(Duration elapsed) {
+     _notifier.value = elapsed.inMilliseconds + _lastTick;
++    _drainPendingAdds();
+     if (_time++ > 10) {
+       _time = 0;
+       _lazyTick(_notifier.value);
+     }
+   }
+ 
++  void _drainPendingAdds() {
++    if (_pendingAdds.isEmpty) return;
++    var budget = _option.maxRasterizePerFrame;
++    while (budget > 0 && _pendingAdds.isNotEmpty) {
++      budget--;
++      _addDanmakuNow(_pendingAdds.removeFirst());
++    }
++  }
++
+   TextPainter get _textPainter => TextPainter(
+         text: TextSpan(
+           text: '弹幕',
+@@ -149,6 +164,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>>
+   @override
+   void dispose() {
+     _running = false;
++    _pendingAdds.clear();
+     _ticker.dispose();
+     _clearDanmakus();
+     _notifier.dispose();
+@@ -173,7 +189,6 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>>
+             ? paragraph.maxIntrinsicWidth + 4
+             : paragraph.maxIntrinsicWidth) +
+         _option.strokeWidth;
+-    final danmakuHeight = paragraph.height + _option.strokeWidth;
+ 
+     if (!scroll &&
+         content.type != DanmakuItemType.scroll &&
+@@ -182,18 +197,23 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>>
+       return false;
+     }
+ 
+-    DanmakuItem<T> getItem() => DanmakuItem<T>(
++    DanmakuItem<T> getItem() {
++      final raster = DmUtils.recordDanmakuImage(
++        contentParagraph: paragraph,
++        content: content,
++        fontSize: _option.fontSize,
++        fontWeight: _option.fontWeight,
++        strokeWidth: _option.strokeWidth,
++      );
++      return DanmakuItem<T>(
+         xPosition: _viewWidth,
+-        width: danmakuWidth,
+-        height: danmakuHeight,
++        width: raster.width,
++        height: raster.height,
+         content: content,
+-        image: DmUtils.recordDanmakuImage(
+-          contentParagraph: paragraph,
+-          content: content,
+-          fontSize: _option.fontSize,
+-          fontWeight: _option.fontWeight,
+-          strokeWidth: _option.strokeWidth,
+-        ));
++        image: raster.image,
++        raster: raster,
++      );
++    }
+ 
+     for (var i = 0; i < _trackCount; i++) {
+       final index =
+@@ -232,12 +252,22 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>>
+     return added;
+   }
+ 
+-  /// 添加弹幕
++  /// 添加弹幕（非自发弹幕先进队列分帧处理）
+   bool _addDanmaku(DanmakuContentItem<T> content) {
+     if (!mounted) {
+       return false;
+     }
++    if (content.selfSend || _option.maxRasterizePerFrame <= 0) {
++      return _addDanmakuNow(content);
++    }
++    _pendingAdds.add(content);
++    if (_running && !_ticker.isActive) {
++      _ticker.start();
++    }
++    return true;
++  }
+ 
++  bool _addDanmakuNow(DanmakuContentItem<T> content) {
+     bool added;
+     switch (content.type) {
+       case DanmakuItemType.scroll:
+@@ -289,7 +319,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>>
+   void _resume() {
+     if (!mounted) return;
+     _running = true;
+-    if (!_isEmpty && !_ticker.isActive) {
++    if ((!_isEmpty || _pendingAdds.isNotEmpty) && !_ticker.isActive) {
+       _ticker.start();
+     }
+     _staticDanmakuItems.refresh();
+@@ -298,6 +328,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>>
+   /// 清空弹幕
+   void _clear() {
+     if (!mounted) return;
++    _pendingAdds.clear();
+     _clearDanmakus();
+     if (_ticker.isActive) {
+       // SchedulerBinding.instance.addPostFrameCallback(
+@@ -465,7 +496,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>>
+                 (tick - item.drawTick!) >=
+                     (item.content as SpecialDanmakuContentItem).duration)));
+     // 暂停动画
+-    if (_isEmpty && _ticker.isActive) {
++    if (_isEmpty && _pendingAdds.isEmpty && _ticker.isActive) {
+       _lastTick = tick;
+       _ticker.stop();
+     }
+@@ -490,6 +521,9 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>>
+   @override
+   void didUpdateWidget(DanmakuScreen<T> oldWidget) {
+     super.didUpdateWidget(oldWidget);
++    if (widget.option != oldWidget.option) {
++      _updateOption(widget.option);
++    }
+     if (oldWidget.size != widget.size) {
+       _init(widget.size);
+     }
+@@ -531,6 +565,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>>
+                     fontSize: _option.fontSize,
+                     fontWeight: _option.fontWeight,
+                     strokeWidth: _option.strokeWidth,
++                    opacity: _option.opacity,
+                     running: _running,
+                     tick: value,
+                   ),
+@@ -554,6 +589,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>>
+                     fontSize: _option.fontSize,
+                     fontWeight: _option.fontWeight,
+                     strokeWidth: _option.strokeWidth,
++                    opacity: _option.opacity,
+                     tick: _notifier.value,
+                   ),
+                   size: widget.size,
+@@ -574,6 +610,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>>
+                     fontSize: _option.fontSize,
+                     fontWeight: _option.fontWeight,
+                     strokeWidth: _option.strokeWidth,
++                    opacity: _option.opacity,
+                     running: _running,
+                     tick: value,
+                   ),
+diff --git a/lib/models/danmaku_item.dart b/lib/models/danmaku_item.dart
+index 197ca2d..87a9195 100644
+--- a/lib/models/danmaku_item.dart
++++ b/lib/models/danmaku_item.dart
+@@ -22,6 +22,9 @@ class DanmakuItem<T> {
+   /// 弹幕布局缓存
+   ui.Image? image;
+ 
++  /// 纹理及逻辑尺寸的持有者，[dispose] 时归还缓存或释放
++  DanmakuRaster? raster;
++
+   bool expired = false;
+ 
+   bool suspend = false;
+@@ -35,7 +38,8 @@ class DanmakuItem<T> {
+   }
+ 
+   void dispose() {
+-    image?.dispose();
++    raster?.dispose();
++    raster = null;
+     image = null;
+   }
+ 
+@@ -45,6 +49,7 @@ class DanmakuItem<T> {
+     required this.width,
+     this.xPosition = 0,
+     this.image,
++    this.raster,
+     this.drawTick,
+   });
+ 
+@@ -59,18 +64,18 @@ class DanmakuItem<T> {
+         fontSize: fontSize,
+         fontWeight: fontWeight,
+       );
+-      image = DmUtils.recordDanmakuImage(
++      final raster = DmUtils.recordDanmakuImage(
+         contentParagraph: paragraph,
+         content: content,
+         fontSize: fontSize,
+         fontWeight: fontWeight,
+         strokeWidth: strokeWidth,
+       );
+-      width = paragraph.maxIntrinsicWidth +
+-          strokeWidth +
+-          (content.selfSend ? 4.0 : 0.0);
+-      height = paragraph.height + strokeWidth;
+       paragraph.dispose();
++      this.raster = raster;
++      image = raster.image;
++      width = raster.width;
++      height = raster.height;
+     }
+   }
+ 
+diff --git a/lib/models/danmaku_option.dart b/lib/models/danmaku_option.dart
+index 14adb85..e15b3ec 100644
+--- a/lib/models/danmaku_option.dart
++++ b/lib/models/danmaku_option.dart
+@@ -50,6 +50,12 @@ class DanmakuOption {
+   /// 弹幕行高
+   final double lineHeight;
+ 
++  /// 弹幕整体不透明度，0-1
++  final double opacity;
++
++  /// 每帧最多光栅化的弹幕数量（分帧摊销，<=0 表示不限制）
++  final int maxRasterizePerFrame;
++
+   bool hideWhat(DanmakuItemType type) => switch (type) {
+         DanmakuItemType.scroll => hideScroll,
+         DanmakuItemType.top => hideTop,
+@@ -73,6 +79,8 @@ class DanmakuOption {
+     this.static2Scroll = false,
+     this.safeArea = true,
+     this.lineHeight = 1.6,
++    this.opacity = 1.0,
++    this.maxRasterizePerFrame = 4,
+   })  : durationInMilliseconds = duration * 1000,
+         staticDurationInMilliseconds = staticDuration * 1000;
+ 
+@@ -92,6 +100,8 @@ class DanmakuOption {
+     bool? static2Scroll,
+     bool? safeArea,
+     double? lineHeight,
++    double? opacity,
++    int? maxRasterizePerFrame,
+   }) {
+     return DanmakuOption(
+       area: area ?? this.area,
+@@ -109,6 +119,50 @@ class DanmakuOption {
+       static2Scroll: static2Scroll ?? this.static2Scroll,
+       safeArea: safeArea ?? this.safeArea,
+       lineHeight: lineHeight ?? this.lineHeight,
++      opacity: opacity ?? this.opacity,
++      maxRasterizePerFrame: maxRasterizePerFrame ?? this.maxRasterizePerFrame,
+     );
+   }
++
++  @override
++  bool operator ==(Object other) =>
++      other is DanmakuOption &&
++      other.fontSize == fontSize &&
++      other.fontWeight == fontWeight &&
++      other.area == area &&
++      other.duration == duration &&
++      other.staticDuration == staticDuration &&
++      other.hideTop == hideTop &&
++      other.hideBottom == hideBottom &&
++      other.hideScroll == hideScroll &&
++      other.hideSpecial == hideSpecial &&
++      other.strokeWidth == strokeWidth &&
++      other.scrollFixedVelocity == scrollFixedVelocity &&
++      other.massiveMode == massiveMode &&
++      other.static2Scroll == static2Scroll &&
++      other.safeArea == safeArea &&
++      other.lineHeight == lineHeight &&
++      other.opacity == opacity &&
++      other.maxRasterizePerFrame == maxRasterizePerFrame;
++
++  @override
++  int get hashCode => Object.hash(
++        fontSize,
++        fontWeight,
++        area,
++        duration,
++        staticDuration,
++        hideTop,
++        hideBottom,
++        hideScroll,
++        hideSpecial,
++        strokeWidth,
++        scrollFixedVelocity,
++        massiveMode,
++        static2Scroll,
++        safeArea,
++        lineHeight,
++        opacity,
++        maxRasterizePerFrame,
++      );
+ }
+diff --git a/lib/scroll_danmaku_painter.dart b/lib/scroll_danmaku_painter.dart
+index b050b70..63dadef 100644
+--- a/lib/scroll_danmaku_painter.dart
++++ b/lib/scroll_danmaku_painter.dart
+@@ -17,6 +17,7 @@ final class ScrollDanmakuPainter extends BaseDanmakuPainter {
+     required super.fontSize,
+     required super.fontWeight,
+     required super.strokeWidth,
++    super.opacity,
+     required super.running,
+     required super.tick,
+     super.batchThreshold,
+@@ -102,6 +103,7 @@ final class ScrollDanmakuPainter extends BaseDanmakuPainter {
+       item,
+       item.xPosition,
+       yPos,
++      opacity,
+     );
+ 
+     item.drawTick = tick;
+diff --git a/lib/special_danmaku_painter.dart b/lib/special_danmaku_painter.dart
+index b5e5443..a23d21c 100644
+--- a/lib/special_danmaku_painter.dart
++++ b/lib/special_danmaku_painter.dart
+@@ -16,6 +16,7 @@ final class SpecialDanmakuPainter extends BaseDanmakuPainter {
+     required super.fontSize,
+     required super.fontWeight,
+     required super.strokeWidth,
++    super.opacity,
+     required super.running,
+     required super.tick,
+     super.batchThreshold,
+@@ -74,7 +75,9 @@ final class SpecialDanmakuPainter extends BaseDanmakuPainter {
+       dy,
+       item.rect.width,
+       item.rect.height,
+-      _paint..color = color,
++      _paint..color = opacity == 1.0
++          ? color
++          : color.withValues(alpha: color.a * opacity),
+     );
+   }
+ 
+diff --git a/lib/static_danmaku_painter.dart b/lib/static_danmaku_painter.dart
+index 8520b24..0884b27 100644
+--- a/lib/static_danmaku_painter.dart
++++ b/lib/static_danmaku_painter.dart
+@@ -10,6 +10,7 @@ final class StaticDanmakuPainter extends CustomPainter {
+   final double fontSize;
+   final int fontWeight;
+   final double strokeWidth;
++  final double opacity;
+   final int tick;
+ 
+   StaticDanmakuPainter({
+@@ -20,6 +21,7 @@ final class StaticDanmakuPainter extends CustomPainter {
+     required this.fontSize,
+     required this.fontWeight,
+     required this.strokeWidth,
++    this.opacity = 1.0,
+     required this.tick,
+   });
+ 
+@@ -42,6 +44,7 @@ final class StaticDanmakuPainter extends CustomPainter {
+           item,
+           item.xPosition,
+           trackHeight * i,
++          opacity,
+         );
+       }
+     }
+@@ -52,5 +55,6 @@ final class StaticDanmakuPainter extends CustomPainter {
+       oldDelegate.count != count ||
+       oldDelegate.fontSize != fontSize ||
+       oldDelegate.fontWeight != fontWeight ||
+-      oldDelegate.strokeWidth != strokeWidth;
++      oldDelegate.strokeWidth != strokeWidth ||
++      oldDelegate.opacity != opacity;
+ }
+diff --git a/lib/utils/utils.dart b/lib/utils/utils.dart
+index aa0f4f6..10775a3 100644
+--- a/lib/utils/utils.dart
++++ b/lib/utils/utils.dart
+@@ -1,9 +1,46 @@
++import 'dart:collection';
+ import 'dart:math';
+ import 'dart:ui' as ui;
+ 
+ import 'package:canvas_danmaku/models/danmaku_content_item.dart';
+ import 'package:material_ui/material_ui.dart';
+ 
++/// 弹幕纹理及其逻辑尺寸。
++///
++/// [cacheKey] 非空时纹理归 DmUtils 的缓存所有，[dispose] 只做引用计数归还，
++/// 不直接释放；缓存淘汰时统一释放。
++final class DanmakuRaster {
++  final ui.Image image;
++
++  /// 逻辑尺寸（未乘 devicePixelRatio），与 [image] 实际像素可能不一致
++  /// （超长弹幕被 maxRasterizeSize 钳制后按原比例截断）。
++  final double width;
++  final double height;
++  final String? _cacheKey;
++
++  DanmakuRaster._({
++    required this.image,
++    required this.width,
++    required this.height,
++    String? cacheKey,
++  }) : _cacheKey = cacheKey;
++
++  void dispose() {
++    if (_cacheKey case final key?) {
++      DmUtils._releaseRaster(key);
++    } else {
++      image.dispose();
++    }
++  }
++}
++
++class _RasterCacheEntry {
++  final DanmakuRaster raster;
++  int refs = 0;
++
++  _RasterCacheEntry(this.raster);
++}
++
+ abstract final class DmUtils {
+   static const maxRasterizeSize = 8192.0;
+ 
+@@ -49,13 +86,64 @@ abstract final class DmUtils {
+       ..layout(const ui.ParagraphConstraints(width: double.infinity));
+   }
+ 
+-  static ui.Image recordDanmakuImage({
++  static const int _rasterCacheCapacity = 128;
++  static final LinkedHashMap<String, _RasterCacheEntry> _rasterCache =
++      LinkedHashMap<String, _RasterCacheEntry>();
++
++  static DanmakuRaster? _acquireRaster(String key) {
++    final entry = _rasterCache.remove(key);
++    if (entry == null) return null;
++    entry.refs++;
++    _rasterCache[key] = entry; // move to end for LRU
++    return entry.raster;
++  }
++
++  static void _releaseRaster(String key) {
++    final entry = _rasterCache[key];
++    if (entry == null) return;
++    if (entry.refs > 0) entry.refs--;
++    if (entry.refs == 0) _evictRasters();
++  }
++
++  static void _evictRasters() {
++    if (_rasterCache.length <= _rasterCacheCapacity) return;
++    for (final key in _rasterCache.keys.toList()) {
++      if (_rasterCache.length <= _rasterCacheCapacity) break;
++      final entry = _rasterCache[key]!;
++      if (entry.refs == 0) {
++        entry.raster.image.dispose();
++        _rasterCache.remove(key);
++      }
++    }
++  }
++
++  /// 生成滚动/静态弹幕纹理（相同文本+样式命中缓存时直接复用）。
++  ///
++  /// 超宽/超高弹幕按 [maxRasterizeSize] 钳制光栅化尺寸，超出部分被截断，
++  /// 返回的 width/height 为钳制后的逻辑尺寸，调用方应以返回值为准。
++  static DanmakuRaster recordDanmakuImage({
+     required ui.Paragraph contentParagraph,
+     required DanmakuContentItem content,
+     required double fontSize,
+     required int fontWeight,
+     required double strokeWidth,
+   }) {
++    final text = content.text;
++    final key = [
++      text.length,
++      text,
++      content.color.toARGB32(),
++      fontSize,
++      fontWeight,
++      strokeWidth,
++      devicePixelRatio,
++      content.isColorful,
++      content.selfSend,
++      content.count,
++    ].join('');
++    final cached = _acquireRaster(key);
++    if (cached != null) return cached;
++
+     double w = contentParagraph.maxIntrinsicWidth + strokeWidth;
+     double h = contentParagraph.height + strokeWidth;
+ 
+@@ -103,7 +191,7 @@ abstract final class DmUtils {
+ 
+       builder
+         ..pushStyle(ui.TextStyle(fontSize: fontSize, foreground: strokePaint))
+-        ..addText(content.text);
++        ..addText(text);
+ 
+       final strokeParagraph = builder.build()
+         ..layout(const ui.ParagraphConstraints(width: double.infinity));
+@@ -119,13 +207,26 @@ abstract final class DmUtils {
+       canvas.drawRect(Rect.fromLTRB(0, 0, w, h), _selfSendPaint);
+     }
+ 
++    double rasterW = (w * devicePixelRatio).ceilToDouble();
++    double rasterH = (h * devicePixelRatio).ceilToDouble();
++    if (rasterW > maxRasterizeSize || rasterH > maxRasterizeSize) {
++      rasterW = min(rasterW, maxRasterizeSize);
++      rasterH = min(rasterH, maxRasterizeSize);
++    }
++
+     final pic = rec.endRecording();
+-    final img = pic.toImageSync(
+-      (w * devicePixelRatio).ceil(),
+-      (h * devicePixelRatio).ceil(),
+-    );
++    final img = pic.toImageSync(rasterW.ceil(), rasterH.ceil());
+     pic.dispose();
+-    return img;
++
++    final raster = DanmakuRaster._(
++      image: img,
++      width: rasterW / devicePixelRatio,
++      height: rasterH / devicePixelRatio,
++      cacheKey: key,
++    );
++    _rasterCache[key] = (_RasterCacheEntry(raster)..refs = 1);
++    _evictRasters();
++    return raster;
+   }
+ 
+   static ui.Image recordSpecialDanmakuImg({
