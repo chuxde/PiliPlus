@@ -210,7 +210,7 @@ $patches_material = @($ModalBarrierPatchMaterial, $NavigationDrawerPatchMaterial
                     $FABPatchMaterial, $TextFieldPatchMaterial, $ScaffoldPatchMaterial, $RefreshIndicatorPatchMaterial,
                     $TabsPatchMaterial)
 
-$PubCacheDir = "~/.pub-cache"
+$PubCacheDir = if (Test-Path "$env:LOCALAPPDATA/Pub/Cache/hosted/pub.dev") { "$env:LOCALAPPDATA/Pub/Cache" } else { "~/.pub-cache" }
 
 switch ($platform.ToLower()) {
     "android" {
