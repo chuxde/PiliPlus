@@ -763,7 +763,8 @@ abstract final class Pref {
       _setting.get(SettingBoxKey.enableMYBar, defaultValue: true);
 
   /// videoExpand 伪选项的存储索引：超出 GetX Transition 枚举范围，
-  /// 表示「澎湃OS风格」视频卡片展开转场，此时背景转场回落为 fadeIn
+  /// 表示「澎湃OS风格」视频卡片展开转场：有 Hero 配对的入口（首页卡片）
+  /// 由封面飞行承载过渡，其余页面沿用 cupertino 背景
   static final int kVideoExpandTransitionIndex = Transition.values.length;
 
   static int get pageTransitionIndex => _setting.get(
@@ -779,7 +780,7 @@ abstract final class Pref {
       : Transition.values[pageTransitionIndex].name;
 
   static Transition get pageTransition => isVideoExpandTransition
-      ? Transition.fadeIn
+      ? Transition.cupertino
       : Transition.values[pageTransitionIndex];
 
   static bool get enableQuickDouble =>

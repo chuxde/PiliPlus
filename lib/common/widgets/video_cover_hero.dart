@@ -23,6 +23,7 @@ class VideoCoverHero extends StatelessWidget {
       // 默认飞行使用目标侧的 child（这里是播放器，未初始化时是黑块），
       // 改为始终显示列表侧卡片封面；FittedBox 保证封面在矩形插值
       // 过程中不被拉伸变形（正常情况下 tween 已保持封面宽高比，此为兜底）。
+      // push 末段淡出，让封面渐隐融入播放器，避免落点生硬；pop 保持不透明。
       flightShuttleBuilder: (
         BuildContext flightContext,
         Animation<double> animation,
@@ -33,7 +34,19 @@ class VideoCoverHero extends StatelessWidget {
         final hero = flightDirection == HeroFlightDirection.push
             ? fromHeroContext.widget
             : toHeroContext.widget;
-        return FittedBox(fit: BoxFit.contain, child: (hero as Hero).child);
+        Widget shuttle = FittedBox(fit: BoxFit.contain, child: (hero as Hero).child);
+        if (flightDirection == HeroFlightDirection.push) {
+          shuttle = FadeTransition(
+            opacity: Tween<double>(begin: 1, end: 0).animate(
+              CurvedAnimation(
+                parent: animation,
+                curve: const Interval(0.7, 1, curve: Curves.easeIn),
+              ),
+            ),
+            child: shuttle,
+          );
+        }
+        return shuttle;
       },
       child: child,
     );
