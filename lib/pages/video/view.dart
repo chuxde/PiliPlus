@@ -16,6 +16,7 @@ import 'package:PiliPlus/common/widgets/scroll_physics.dart'
     show tabBarView, platformAlwaysClampingPhysics, platformClampingPhysics;
 import 'package:PiliPlus/common/widgets/simple_app_bar.dart';
 import 'package:PiliPlus/common/widgets/sliver/video_header.dart';
+import 'package:PiliPlus/common/widgets/video_cover_hero.dart';
 import 'package:PiliPlus/common/widgets/svg/play_icon.dart';
 import 'package:PiliPlus/models/common/episode_panel_type.dart';
 import 'package:PiliPlus/models_new/pgc/pgc_info_model/result.dart';
@@ -1467,7 +1468,7 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
 
   Widget videoPlayer({required double width, required double height}) {
     final isFullScreen = this.isFullScreen;
-    return Stack(
+    final Widget stack = Stack(
       clipBehavior: Clip.none,
       children: [
         const Positioned.fill(
@@ -1621,6 +1622,8 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
         ),
       ],
     );
+    // 澎湃OS风格转场：播放器区域作为封面飞行的终点，rect 随当前布局实时确定
+    return VideoCoverHero(tag: heroTag, child: stack);
   }
 
   Widget localIntroPanel({
