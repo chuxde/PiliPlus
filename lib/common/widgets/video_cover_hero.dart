@@ -19,8 +19,10 @@ class VideoCoverHero extends StatelessWidget {
     }
     return Hero(
       tag: tag!,
+      createRectTween: createCoverRectTween,
       // 默认飞行使用目标侧的 child（这里是播放器，未初始化时是黑块），
-      // 改为始终显示列表侧卡片封面，视觉上即封面展开。
+      // 改为始终显示列表侧卡片封面；FittedBox 保证封面在矩形插值
+      // 过程中不被拉伸变形（正常情况下 tween 已保持封面宽高比，此为兜底）。
       flightShuttleBuilder: (
         BuildContext flightContext,
         Animation<double> animation,
@@ -31,9 +33,34 @@ class VideoCoverHero extends StatelessWidget {
         final hero = flightDirection == HeroFlightDirection.push
             ? fromHeroContext.widget
             : toHeroContext.widget;
-        return (hero as Hero).child;
+        return FittedBox(fit: BoxFit.contain, child: (hero as Hero).child);
       },
       child: child,
     );
   }
+}
+
+/// 飞行矩形插值：播放器矩形按封面（较小一侧）的宽高比 contain 适配，
+/// 起止矩形宽高比一致，飞行全程为纯缩放+平移，封面不变形。
+RectTween createCoverRectTween(Rect? from, Rect? to) {
+  if (from == null || to == null) {
+    return RectTween(begin: from, end: to);
+  }
+  // 封面卡片必然小于播放器区域，以此区分两侧矩形
+  final isCoverFrom = from.width * from.height <= to.width * to.height;
+  final cover = isCoverFrom ? from : to;
+  final other = isCoverFrom ? to : from;
+  final ratio = cover.width / cover.height;
+  double width = other.width;
+  double height = width / ratio;
+  if (height > other.height) {
+    height = other.height;
+    width = height * ratio;
+  }
+  final fitted = Rect.fromCenter(
+    center: other.center,
+    width: width,
+    height: height,
+  );
+  return RectTween(begin: isCoverFrom ? from : fitted, end: isCoverFrom ? fitted : to);
 }
