@@ -57,6 +57,7 @@ import 'package:PiliPlus/services/service_locator.dart';
 import 'package:PiliPlus/services/shutdown_timer_service.dart'
     show shutdownTimerService;
 import 'package:PiliPlus/utils/accounts.dart';
+import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:PiliPlus/utils/android/bindings.g.dart';
 import 'package:PiliPlus/utils/extension/scroll_controller_ext.dart';
 import 'package:PiliPlus/utils/extension/theme_ext.dart';
@@ -1481,6 +1482,11 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
         plPlayer(width: width, height: height),
 
         Obx(() {
+          // 起播前展示封面承接封面飞行落点（消除闪黑），播放器就绪后淡出
+          final playerReady = videoDetailController.videoState.value &&
+              videoDetailController.autoPlay &&
+              plPlayerController?.videoController != null;
+          final coverUrl = videoDetailController.cover.value;
           if (!videoDetailController.autoPlay) {
             return Positioned.fill(
               child: GestureDetector(
@@ -1502,7 +1508,29 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
               ),
             );
           }
-          return const SizedBox.shrink();
+          if (coverUrl.isEmpty) {
+            return const SizedBox.shrink();
+          }
+          return Positioned.fill(
+            child: AnimatedOpacity(
+              opacity: playerReady ? 0 : 1,
+              duration: const Duration(milliseconds: 250),
+              child: IgnorePointer(
+                child: NetworkImgLayer(
+                  type: .emote,
+                  quality: 60,
+                  src: coverUrl,
+                  width: width,
+                  height: height,
+                  cacheWidth: true,
+                  fit: Pref.isVideoExpandTransition ? .contain : .cover,
+                  getPlaceHolder: () => Center(
+                    child: Image.asset(Assets.loading),
+                  ),
+                ),
+              ),
+            ),
+          );
         }),
         manualPlayerWidget(height),
 

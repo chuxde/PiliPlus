@@ -151,3 +151,4 @@ dist
 
 test*
 .codegraph/
+**/android/app/key.jks
