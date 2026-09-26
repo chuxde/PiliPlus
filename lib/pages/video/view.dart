@@ -16,7 +16,6 @@ import 'package:PiliPlus/common/widgets/scroll_physics.dart'
     show tabBarView, platformAlwaysClampingPhysics, platformClampingPhysics;
 import 'package:PiliPlus/common/widgets/simple_app_bar.dart';
 import 'package:PiliPlus/common/widgets/sliver/video_header.dart';
-import 'package:PiliPlus/common/widgets/video_cover_hero.dart';
 import 'package:PiliPlus/common/widgets/svg/play_icon.dart';
 import 'package:PiliPlus/models/common/episode_panel_type.dart';
 import 'package:PiliPlus/models_new/pgc/pgc_info_model/result.dart';
@@ -57,7 +56,6 @@ import 'package:PiliPlus/services/service_locator.dart';
 import 'package:PiliPlus/services/shutdown_timer_service.dart'
     show shutdownTimerService;
 import 'package:PiliPlus/utils/accounts.dart';
-import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:PiliPlus/utils/android/bindings.g.dart';
 import 'package:PiliPlus/utils/extension/scroll_controller_ext.dart';
 import 'package:PiliPlus/utils/extension/theme_ext.dart';
@@ -1469,7 +1467,7 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
 
   Widget videoPlayer({required double width, required double height}) {
     final isFullScreen = this.isFullScreen;
-    final Widget stack = Stack(
+    return Stack(
       clipBehavior: Clip.none,
       children: [
         const Positioned.fill(
@@ -1523,7 +1521,6 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
                   width: width,
                   height: height,
                   cacheWidth: true,
-                  fit: Pref.isVideoExpandTransition ? .contain : .cover,
                   getPlaceHolder: () => Center(
                     child: Image.asset(Assets.loading),
                   ),
@@ -1650,8 +1647,6 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
         ),
       ],
     );
-    // 澎湃OS风格转场：播放器区域作为封面飞行的终点，rect 随当前布局实时确定
-    return VideoCoverHero(tag: heroTag, child: stack);
   }
 
   Widget localIntroPanel({

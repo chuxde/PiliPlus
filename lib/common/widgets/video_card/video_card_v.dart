@@ -3,7 +3,6 @@ import 'package:PiliPlus/common/widgets/badge.dart';
 import 'package:PiliPlus/common/widgets/image/image_save.dart';
 import 'package:PiliPlus/common/widgets/image/network_img_layer.dart';
 import 'package:PiliPlus/common/widgets/stat/stat.dart';
-import 'package:PiliPlus/common/widgets/video_cover_hero.dart';
 import 'package:PiliPlus/common/widgets/video_popup_menu.dart';
 import 'package:PiliPlus/http/search.dart';
 import 'package:PiliPlus/models/home/rcmd/result.dart';
@@ -17,7 +16,6 @@ import 'package:PiliPlus/utils/id_utils.dart';
 import 'package:PiliPlus/utils/page_utils.dart';
 import 'package:PiliPlus/utils/platform_utils.dart';
 import 'package:PiliPlus/utils/storage_pref.dart';
-import 'package:PiliPlus/utils/utils.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:intl/intl.dart';
 import 'package:material_ui/material_ui.dart';
@@ -27,19 +25,23 @@ class VideoCardV extends StatelessWidget {
   final BaseRcmdVideoItemModel videoItem;
   final VoidCallback? onRemove;
 
-  const VideoCardV({
+  VideoCardV({
     super.key,
     required this.videoItem,
     this.onRemove,
   });
 
-  // 澎湃OS风格转场：每次 build 生成一次随机 tag，封面与视频页播放器通过它配对
-  String? _expandHeroTag() =>
-      Pref.isVideoExpandTransition
-          ? Utils.makeHeroTag(videoItem.aid ?? videoItem.bvid)
-          : null;
+  final GlobalKey _coverKey = GlobalKey();
 
-  Future<void> onPushDetail([String? expandHeroTag]) async {
+  // 澎湃OS风格转场：点击时捕获封面的屏幕位置，视频页从该位置向下展开
+  Rect? _coverRect() {
+    if (!Pref.isVideoExpandTransition) return null;
+    final box = _coverKey.currentContext?.findRenderObject();
+    if (box is! RenderBox || !box.attached || !box.hasSize) return null;
+    return box.localToGlobal(Offset.zero) & box.size;
+  }
+
+  Future<void> onPushDetail([Rect? coverRect]) async {
     switch (videoItem.goto) {
       case 'bangumi':
         PageUtils.viewPgc(epId: videoItem.param!);
@@ -70,9 +72,7 @@ class VideoCardV extends StatelessWidget {
             title: videoItem.title,
             isVertical: isVertical,
             dimension: dimension,
-            extraArguments: expandHeroTag == null
-                ? null
-                : {'heroTag': expandHeroTag},
+            coverRect: coverRect,
           );
         }
         break;
@@ -93,7 +93,6 @@ class VideoCardV extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final expandHeroTag = _expandHeroTag();
     void onLongPress() => imageSaveDialog(
       title: videoItem.title,
       cover: videoItem.cover,
@@ -104,7 +103,7 @@ class VideoCardV extends StatelessWidget {
       children: [
         Card(
           child: InkWell(
-            onTap: () => onPushDetail(expandHeroTag),
+            onTap: () => onPushDetail(_coverRect()),
             onLongPress: onLongPress,
             onSecondaryTap: PlatformUtils.isMobile ? null : onLongPress,
             borderRadius: const .all(.circular(12)),
@@ -120,8 +119,8 @@ class VideoCardV extends StatelessWidget {
                         return Stack(
                           clipBehavior: Clip.none,
                           children: [
-                            VideoCoverHero(
-                              tag: expandHeroTag,
+                            KeyedSubtree(
+                              key: _coverKey,
                               child: NetworkImgLayer(
                                 src: videoItem.cover,
                                 width: maxWidth,

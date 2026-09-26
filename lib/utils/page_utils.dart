@@ -18,6 +18,8 @@ import 'package:PiliPlus/pages/common/publish/publish_route.dart';
 import 'package:PiliPlus/pages/contact/view.dart';
 import 'package:PiliPlus/pages/fav_panel/view.dart';
 import 'package:PiliPlus/pages/share/view.dart';
+import 'package:PiliPlus/pages/video/view.dart';
+import 'package:PiliPlus/common/widgets/video_expand_route.dart';
 import 'package:PiliPlus/utils/android/android_helper.dart';
 import 'package:PiliPlus/utils/app_scheme.dart';
 import 'package:PiliPlus/utils/extension/context_ext.dart';
@@ -534,6 +536,7 @@ abstract final class PageUtils {
     bool off = false,
     bool isVertical = false,
     Dimension? dimension,
+    Rect? coverRect,
   }) {
     final arguments = {
       'aid': aid ?? IdUtils.bv2av(bvid!),
@@ -550,6 +553,19 @@ abstract final class PageUtils {
       'heroTag': Utils.makeHeroTag(cid),
       ...?extraArguments,
     };
+    // 澎湃OS风格转场：视频页从封面位置向下展开
+    if (coverRect != null && Pref.isVideoExpandTransition) {
+      final route = VideoExpandRoute<void>(
+        settings: RouteSettings(name: '/videoV', arguments: arguments),
+        builder: (context) => const VideoDetailPageV(),
+        coverRect: coverRect,
+      );
+      final nav = Get.key.currentState!;
+      if (off) {
+        return nav.pushReplacement(route);
+      }
+      return nav.push(route);
+    }
     return PageUtils.toDupNamed('/videoV', arguments: arguments, off: off);
   }
 
