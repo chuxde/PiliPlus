@@ -140,6 +140,10 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
   int? _pgcType;
   VideoType _videoType = VideoType.ugc;
   int _heartDuration = 0;
+  // 音频失联看门狗状态：视频位置持续前进而 audio-pts 冻结超过阈值时恢复
+  String _audioPts = '';
+  double? _audioPtsFreezePos;
+  int _lastAudioRecoveryAt = 0;
   int? width;
   int? height;
 
@@ -729,6 +733,9 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
       'volume':
           (PlatformUtils.isMobile ? Pref.playerVolume : volume.value * 100)
               .toString(),
+      // ffmpeg http 默认不断线重连；不开启时 edl 音频子流断流后会提前 EOF，
+      // mpv 以纯视频模式继续播放（表现为有画面没声音）
+      'stream-lavf-o': 'reconnect=1,reconnect_streamed=1',
     };
     final autosync = Pref.autosync;
     if (autosync != '0') {
@@ -771,6 +778,8 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
   ) async {
     isBuffering.value = false;
     _heartDuration = 0;
+    _audioPts = '';
+    _audioPtsFreezePos = null;
     danmakuController?.clear();
 
     var player = _videoPlayerController;
@@ -838,6 +847,48 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
       return ctr.open(media, play: true);
     }
     return null;
+  }
+
+  // 音频失联看门狗：网络断流时 edl 音频子流可能提前 EOF，mpv 会以纯视频
+  // 模式继续播放（有画面没声音）。检测到视频位置持续前进而 audio-pts 冻结
+  // 超过 3 秒时，重开播放器让两条子流重新拉流。属性不可用（无音轨/未就绪）
+  // 时返回空串，自动跳过。
+  void _checkAudioAlive(NativePlayer player, Duration position) {
+    if (dataSource is FileSource || !playerStatus.isPlaying) {
+      return;
+    }
+    final String pts;
+    try {
+      pts = player.getProperty('audio-pts');
+    } catch (_) {
+      return;
+    }
+    if (pts.isEmpty) {
+      _audioPts = '';
+      _audioPtsFreezePos = null;
+      return;
+    }
+    if (pts != _audioPts) {
+      _audioPts = pts;
+      _audioPtsFreezePos = null;
+      return;
+    }
+    final posSec = position.inMilliseconds / 1000;
+    final start = _audioPtsFreezePos ??= posSec;
+    if (posSec - start < 3) {
+      return;
+    }
+    _audioPtsFreezePos = null;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (now - _lastAudioRecoveryAt < 30000) {
+      return;
+    }
+    _lastAudioRecoveryAt = now;
+    if (kDebugMode) {
+      debugPrint('plPlayer: audio track stalled (audio-pts frozen), recovering');
+    }
+    SmartDialog.showToast('音频中断，正在恢复');
+    refreshPlayer();
   }
 
   // 开始播放
@@ -945,6 +996,8 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
 
       /// position
       stream.position.listen((Duration position) {
+        _checkAudioAlive(player, position);
+
         final posInSeconds = position.inSeconds;
 
         if (posInSeconds != this.position.value) {
