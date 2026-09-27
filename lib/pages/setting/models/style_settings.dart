@@ -99,7 +99,7 @@ List<SettingsModel> get styleSettings => [
   NormalModel(
     title: '页面过渡动画',
     leading: const Icon(Icons.animation),
-    getSubtitle: () => '当前：${Pref.pageTransitionLabel}',
+    getSubtitle: () => '当前：${Pref.pageTransition.name}',
     onTap: _showTransitionDialog,
   ),
   const SwitchModel(
@@ -651,20 +651,17 @@ Future<void> _showTransitionDialog(
   BuildContext context,
   VoidCallback setState,
 ) async {
-  final res = await showDialog<int>(
+  final res = await showDialog<Transition>(
     context: context,
-    builder: (context) => SelectDialog<int>(
+    builder: (context) => SelectDialog<Transition>(
       title: '页面过渡动画',
-      value: Pref.pageTransitionIndex,
-      values: [
-        for (final e in Transition.values) (e.index, e.name),
-        (Pref.kVideoExpandTransitionIndex, 'videoExpand'),
-      ],
+      value: Pref.pageTransition,
+      values: Transition.values.map((e) => (e, e.name)).toList(),
     ),
   );
   if (res != null) {
-    Get.rootController.defaultTransition = Pref.pageTransition;
-    await GStorage.setting.put(SettingBoxKey.pageTransition, res);
+    Get.rootController.defaultTransition = res;
+    await GStorage.setting.put(SettingBoxKey.pageTransition, res.index);
     setState();
   }
 }

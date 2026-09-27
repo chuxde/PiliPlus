@@ -762,26 +762,11 @@ abstract final class Pref {
   static bool get enableMYBar =>
       _setting.get(SettingBoxKey.enableMYBar, defaultValue: true);
 
-  /// videoExpand 伪选项的存储索引：超出 GetX Transition 枚举范围，
-  /// 表示「澎湃OS风格」视频卡片展开转场：有 Hero 配对的入口（首页卡片）
-  /// 由封面飞行承载过渡，其余页面沿用 cupertino 背景
-  static final int kVideoExpandTransitionIndex = Transition.values.length;
-
-  static int get pageTransitionIndex => _setting.get(
-    SettingBoxKey.pageTransition,
-    defaultValue: Transition.native.index,
-  );
-
-  static bool get isVideoExpandTransition =>
-      pageTransitionIndex == kVideoExpandTransitionIndex;
-
-  static String get pageTransitionLabel => isVideoExpandTransition
-      ? 'videoExpand'
-      : Transition.values[pageTransitionIndex].name;
-
-  static Transition get pageTransition => isVideoExpandTransition
-      ? Transition.cupertino
-      : Transition.values[pageTransitionIndex];
+  static Transition get pageTransition =>
+      Transition.values[_setting.get(
+        SettingBoxKey.pageTransition,
+        defaultValue: Transition.native.index,
+      )];
 
   static bool get enableQuickDouble =>
       _setting.get(SettingBoxKey.enableQuickDouble, defaultValue: true);

@@ -12,12 +12,11 @@ import 'package:PiliPlus/utils/date_utils.dart';
 import 'package:PiliPlus/utils/duration_utils.dart';
 import 'package:PiliPlus/utils/page_utils.dart';
 import 'package:PiliPlus/utils/platform_utils.dart';
-import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:material_ui/material_ui.dart';
 
 // 视频卡片 - 水平布局
 class VideoCardH extends StatelessWidget {
-  VideoCardH({
+  const VideoCardH({
     super.key,
     required this.videoItem,
     this.onTap,
@@ -28,16 +27,6 @@ class VideoCardH extends StatelessWidget {
   final VoidCallback? onTap;
   final ValueChanged<int>? onViewLater;
   final VoidCallback? onRemove;
-
-  final GlobalKey _coverKey = GlobalKey();
-
-  // 澎湃OS风格转场：点击时捕获封面的屏幕位置，视频页从该位置向下展开
-  Rect? _coverRect() {
-    if (!Pref.isVideoExpandTransition) return null;
-    final box = _coverKey.currentContext?.findRenderObject();
-    if (box is! RenderBox || !box.attached || !box.hasSize) return null;
-    return box.localToGlobal(Offset.zero) & box.size;
-  }
 
   void onLongPress() => imageSaveDialog(
     bvid: videoItem.bvid,
@@ -56,7 +45,7 @@ class VideoCardH extends StatelessWidget {
           InkWell(
             onLongPress: onLongPress,
             onSecondaryTap: PlatformUtils.isMobile ? null : onLongPress,
-            onTap: onTap ?? () => pushVideoH(videoItem, coverRect: _coverRect()),
+            onTap: onTap ?? () => pushVideoH(videoItem),
             child: Padding(
               padding: const .symmetric(
                 horizontal: Style.safeSpace,
@@ -77,13 +66,10 @@ class VideoCardH extends StatelessWidget {
                         return Stack(
                           clipBehavior: .none,
                           children: [
-                            KeyedSubtree(
-                              key: _coverKey,
-                              child: NetworkImgLayer(
-                                src: videoItem.cover,
-                                width: maxWidth,
-                                height: maxHeight,
-                              ),
+                            NetworkImgLayer(
+                              src: videoItem.cover,
+                              width: maxWidth,
+                              height: maxHeight,
                             ),
                             if (videoItem.badge case final badge?)
                               PBadge(
@@ -230,10 +216,7 @@ class VideoCardH extends StatelessWidget {
   }
 }
 
-Future<void> pushVideoH(
-  HorizontalVideoModel videoItem, {
-  Rect? coverRect,
-}) async {
+Future<void> pushVideoH(HorizontalVideoModel videoItem) async {
   if (videoItem.isPugv ?? false) {
     PageUtils.viewPugv(seasonId: videoItem.seasonId);
     return;
@@ -270,7 +253,6 @@ Future<void> pushVideoH(
       cover: videoItem.cover,
       title: videoItem.title,
       dimension: dimension,
-      coverRect: coverRect,
     );
   }
 }

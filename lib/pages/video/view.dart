@@ -1480,11 +1480,6 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
         plPlayer(width: width, height: height),
 
         Obx(() {
-          // 起播前展示封面承接封面飞行落点（消除闪黑），播放器就绪后淡出
-          final playerReady = videoDetailController.videoState.value &&
-              videoDetailController.autoPlay &&
-              plPlayerController?.videoController != null;
-          final coverUrl = videoDetailController.cover.value;
           if (!videoDetailController.autoPlay) {
             return Positioned.fill(
               child: GestureDetector(
@@ -1506,28 +1501,7 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
               ),
             );
           }
-          if (coverUrl.isEmpty) {
-            return const SizedBox.shrink();
-          }
-          return Positioned.fill(
-            child: AnimatedOpacity(
-              opacity: playerReady ? 0 : 1,
-              duration: const Duration(milliseconds: 250),
-              child: IgnorePointer(
-                child: NetworkImgLayer(
-                  type: .emote,
-                  quality: 60,
-                  src: coverUrl,
-                  width: width,
-                  height: height,
-                  cacheWidth: true,
-                  getPlaceHolder: () => Center(
-                    child: Image.asset(Assets.loading),
-                  ),
-                ),
-              ),
-            ),
-          );
+          return const SizedBox.shrink();
         }),
         manualPlayerWidget(height),
 

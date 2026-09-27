@@ -15,7 +15,6 @@ import 'package:PiliPlus/utils/extension/dimension_ext.dart';
 import 'package:PiliPlus/utils/id_utils.dart';
 import 'package:PiliPlus/utils/page_utils.dart';
 import 'package:PiliPlus/utils/platform_utils.dart';
-import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:intl/intl.dart';
 import 'package:material_ui/material_ui.dart';
@@ -25,23 +24,13 @@ class VideoCardV extends StatelessWidget {
   final BaseRcmdVideoItemModel videoItem;
   final VoidCallback? onRemove;
 
-  VideoCardV({
+  const VideoCardV({
     super.key,
     required this.videoItem,
     this.onRemove,
   });
 
-  final GlobalKey _coverKey = GlobalKey();
-
-  // 澎湃OS风格转场：点击时捕获封面的屏幕位置，视频页从该位置向下展开
-  Rect? _coverRect() {
-    if (!Pref.isVideoExpandTransition) return null;
-    final box = _coverKey.currentContext?.findRenderObject();
-    if (box is! RenderBox || !box.attached || !box.hasSize) return null;
-    return box.localToGlobal(Offset.zero) & box.size;
-  }
-
-  Future<void> onPushDetail([Rect? coverRect]) async {
+  Future<void> onPushDetail() async {
     switch (videoItem.goto) {
       case 'bangumi':
         PageUtils.viewPgc(epId: videoItem.param!);
@@ -72,7 +61,6 @@ class VideoCardV extends StatelessWidget {
             title: videoItem.title,
             isVertical: isVertical,
             dimension: dimension,
-            coverRect: coverRect,
           );
         }
         break;
@@ -103,7 +91,7 @@ class VideoCardV extends StatelessWidget {
       children: [
         Card(
           child: InkWell(
-            onTap: () => onPushDetail(_coverRect()),
+            onTap: onPushDetail,
             onLongPress: onLongPress,
             onSecondaryTap: PlatformUtils.isMobile ? null : onLongPress,
             borderRadius: const .all(.circular(12)),
@@ -116,18 +104,15 @@ class VideoCardV extends StatelessWidget {
                     builder: (context, boxConstraints) {
                       double maxWidth = boxConstraints.maxWidth;
                       double maxHeight = boxConstraints.maxHeight;
-                        return Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            KeyedSubtree(
-                              key: _coverKey,
-                              child: NetworkImgLayer(
-                                src: videoItem.cover,
-                                width: maxWidth,
-                                height: maxHeight,
-                                borderRadius: const .vertical(top: .circular(12)),
-                              ),
-                            ),
+                      return Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          NetworkImgLayer(
+                            src: videoItem.cover,
+                            width: maxWidth,
+                            height: maxHeight,
+                            borderRadius: const .vertical(top: .circular(12)),
+                          ),
                           if (videoItem.duration > 0)
                             PBadge(
                               bottom: 6,
