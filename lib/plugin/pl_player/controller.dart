@@ -144,6 +144,11 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
   String _audioPts = '';
   double? _audioPtsFreezePos;
   int _lastAudioRecoveryAt = 0;
+  // 播放看门狗：play 之后位置长时间不前进（断流/错误终止）时重开流
+  Timer? _resumeTimer;
+  int? _resumeCheckPos;
+  int _resumeCheckTries = 0;
+  int _lastRecoveryAt = 0;
   int? width;
   int? height;
 
@@ -734,7 +739,10 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
           (PlatformUtils.isMobile ? Pref.playerVolume : volume.value * 100)
               .toString(),
       // ffmpeg http 默认不断线重连；不开启时 edl 音频子流断流后会提前 EOF，
-      // mpv 以纯视频模式继续播放（表现为有画面没声音）
+      // mpv 以纯视频模式继续播放（表现为有画面没声音）。
+      // network-timeout 把"连接挂起无响应"在 10s 内转成显式错误，
+      // 交给 reconnect/播放看门狗处理，避免 socket 阻塞到内核超时（分钟级）
+      'network-timeout': '10',
       'stream-lavf-o': 'reconnect=1,reconnect_streamed=1',
     };
     final autosync = Pref.autosync;
@@ -780,6 +788,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     _heartDuration = 0;
     _audioPts = '';
     _audioPtsFreezePos = null;
+    _cancelResumeWatchdog();
     danmakuController?.clear();
 
     var player = _videoPlayerController;
@@ -847,6 +856,88 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
       return ctr.open(media, play: true);
     }
     return null;
+  }
+
+  /// 恢复播放的统一出口：重开当前媒体，10 秒节流防止连环触发
+  void _recoverPlayback(String toast) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (now - _lastRecoveryAt < 10000) {
+      return;
+    }
+    _lastRecoveryAt = now;
+    SmartDialog.showToast(toast, displayTime: const Duration(milliseconds: 500));
+    refreshPlayer();
+  }
+
+  void _cancelResumeWatchdog() {
+    _resumeTimer?.cancel();
+    _resumeTimer = null;
+    _resumeCheckPos = null;
+  }
+
+  /// play 之后监视：位置 5 秒内没有任何前进（且非用户暂停）则判定卡死，
+  /// 重开流。通知栏/前台 playOrPause 均经 stream.playing 触发，两条路径共用
+  void _armResumeWatchdog() {
+    if (isLive || dataSource is FileSource || _playerCount == 0) {
+      return;
+    }
+    _resumeCheckPos = _videoPlayerController?.state.position.inMilliseconds;
+    _resumeCheckTries = 0;
+    _resumeTimer?.cancel();
+    _resumeTimer = Timer(const Duration(seconds: 5), _checkResumeProgress);
+  }
+
+  void _checkResumeProgress() {
+    final checkPos = _resumeCheckPos;
+    final ctr = _videoPlayerController;
+    if (checkPos == null || ctr == null || _playerCount == 0) {
+      return;
+    }
+    if (!playerStatus.isPlaying || playerStatus.isCompleted) {
+      return;
+    }
+    if (ctr.state.position.inMilliseconds > checkPos + 200) {
+      _cancelResumeWatchdog();
+      return;
+    }
+    // 正在缓冲时给 mpv 自身 reconnect 最多 10 秒机会，仍无进展则强制重开
+    if (isBuffering.value && _resumeCheckTries < 2) {
+      _resumeCheckTries += 1;
+      _resumeTimer = Timer(const Duration(seconds: 5), _checkResumeProgress);
+      return;
+    }
+    _cancelResumeWatchdog();
+    _recoverPlayback('播放中断，正在重试');
+  }
+
+  /// 网络错误后监视：3 秒内位置仍未前进则重开流。
+  /// 覆盖两类既有逻辑救不回的场景：mpv 错误终止文件（END_FILE+ERROR，
+  /// 此时 buffering 标志不成立）、以及错误文本不属于已知前缀的断流
+  void _scheduleFrozenRecovery() {
+    final ctr = _videoPlayerController;
+    if (ctr == null || isLive) {
+      return;
+    }
+    EasyThrottle.throttle(
+      'plPlayerFrozenRecovery',
+      const Duration(milliseconds: 10000),
+      () {
+        final errPos = ctr.state.position.inMilliseconds;
+        Timer(const Duration(milliseconds: 3000), () {
+          if (playerStatus.isCompleted || dataSource is FileSource) {
+            return;
+          }
+          final posNow = _videoPlayerController?.state.position.inMilliseconds;
+          if (posNow != errPos) {
+            return; // 已自行恢复
+          }
+          if (kDebugMode) {
+            debugPrint('plPlayer: playback frozen after network error, recovering');
+          }
+          _recoverPlayback('视频链接打开失败，重试中');
+        });
+      },
+    );
   }
 
   // 音频失联看门狗：网络断流时 edl 音频子流可能提前 EOF，mpv 会以纯视频
@@ -956,6 +1047,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
           _stopWakeLockTimer();
           _updatePlaybackState();
           WakelockPlus.enable();
+          _armResumeWatchdog();
 
           if (_isAutoEnterPip) {
             if (_isCurrVideoPage) {
@@ -968,6 +1060,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
           playerStatus = .paused;
           _startWakeLockTimer();
           _disableAutoEnterPip();
+          _cancelResumeWatchdog();
         }
 
         for (final element in _statusListeners) {
@@ -1054,27 +1147,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
             //tcp: ffurl_read returned 0xdfb9b0bb
             //tcp: ffurl_read returned 0xffffff99
             event.startsWith('tcp: ffurl_read returned ')) {
-          EasyThrottle.throttle(
-            'controllerStream.error.listen',
-            const Duration(milliseconds: 10000),
-            () {
-              Timer(const Duration(milliseconds: 3000), () {
-                // if (kDebugMode) {
-                //   debugPrint("isBuffering.value: ${isBuffering.value}");
-                // }
-                // if (kDebugMode) {
-                //   debugPrint("_buffered.value: ${_buffered.value}");
-                // }
-                if (isBuffering.value && buffered.value == 0) {
-                  SmartDialog.showToast(
-                    '视频链接打开失败，重试中',
-                    displayTime: const Duration(milliseconds: 500),
-                  );
-                  refreshPlayer();
-                }
-              });
-            },
-          );
+          _scheduleFrozenRecovery();
         } else if (event.startsWith('Could not open codec')) {
           SmartDialog.showToast('无法加载解码器, $event，可能会切换至软解');
         } else if (!onlyPlayAudio.value) {
@@ -1084,6 +1157,9 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
               event.startsWith("Can not open")) {
             return;
           }
+          // mpv 错误终止文件时 stream.error 只有 mpv_error_string 文本
+          // （如 "Something went wrong"），不匹配上面任何前缀，需兜底检测
+          _scheduleFrozenRecovery();
           if (!kDebugMode) {
             Utils.reportError('$event\n${player.state.playlist}');
           }
@@ -1616,6 +1692,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
       AndroidHelper$ToDart.onUserLeaveHint = null;
     }
     _timer?.cancel();
+    _cancelResumeWatchdog();
     // _position.close();
     // _playerEventSubs?.cancel();
     // _sliderPosition.close();
